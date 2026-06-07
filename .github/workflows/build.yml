@@ -50,6 +50,7 @@ jobs:
             autoconf libtool pkg-config \
             zlib1g-dev libncurses5-dev libncursesw5-dev \
             cmake libffi-dev libssl-dev \
+            libunwind-dev \
             libltdl-dev \
             libgstreamer1.0-dev \
             ccache \
