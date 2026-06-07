@@ -5,30 +5,28 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true   # silences Node 20 warnings globally
+
 jobs:
   build:
     runs-on: ubuntu-22.04
     timeout-minutes: 120
 
-    env:
-      BUILDOZER_HOME:   /home/runner/.buildozer
-      ANDROID_SDK_ROOT: /home/runner/.buildozer/android/platform/android-sdk
-      ANDROID_NDK_ROOT: /home/runner/.buildozer/android/platform/android-ndk-r25b
-
     steps:
       # ── 1. Checkout ──────────────────────────────────────────────────────────
       - name: Checkout repo
-        uses: actions/checkout@v4.2.2
+        uses: actions/checkout@v4
 
       # ── 2. Python ────────────────────────────────────────────────────────────
       - name: Set up Python 3.11
-        uses: actions/setup-python@v5.3.0
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
       # ── 3. Cache Buildozer ────────────────────────────────────────────────
       - name: Cache Buildozer global directory
-        uses: actions/cache@v4.2.0
+        uses: actions/cache@v4
         with:
           path: /home/runner/.buildozer
           key: buildozer-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
@@ -36,14 +34,12 @@ jobs:
             buildozer-${{ runner.os }}-
 
       - name: Cache pip
-        uses: actions/cache@v4.2.0
+        uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: pip-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
 
-      # ── 4. System dependencies ────────────────────────────────────────────
-      # NOTE: libgstreamer1.0-dev REMOVED — has broken deps on ubuntu-22.04
-      # runners and is not needed for Kivy SDL2 bootstrap APK builds.
+      # ── 4. System dependencies ─────────────────────────────────────────────
       - name: Install system dependencies
         run: |
           sudo apt-get update -qq
@@ -59,7 +55,7 @@ jobs:
             ccache \
             aapt
 
-      # ── 5. Install build tools ────────────────────────────────────────────
+      # ── 5. Install build tools ─────────────────────────────────────────────
       - name: Install Buildozer and Cython
         run: |
           pip install --upgrade pip
@@ -68,23 +64,23 @@ jobs:
             cython==3.0.10 \
             "python-for-android==2024.1.21"
 
-      # ── 6. Accept Android SDK licenses ───────────────────────────────────
+      # ── 6. Accept Android SDK licenses ────────────────────────────────────
       - name: Accept Android SDK licenses
+        continue-on-error: true
         run: |
           mkdir -p /home/runner/.buildozer/android/platform/android-sdk/licenses
           echo "24333f8a63b6825ea9c5514f83c2829b004d1fee" \
             > /home/runner/.buildozer/android/platform/android-sdk/licenses/android-sdk-license
           echo "84831b9409646a918e30573bab4c9c91346d8abd" \
             > /home/runner/.buildozer/android/platform/android-sdk/licenses/android-sdk-preview-license
-        continue-on-error: true
 
-      # ── 7. Write .env ─────────────────────────────────────────────────────
+      # ── 7. Write .env ──────────────────────────────────────────────────────
       - name: Write .env
         run: |
           echo "GITHUB_TOKEN=${{ secrets.GITHUB_TOKEN_AI }}" > .env
           echo "OPENROUTER_API_KEY=${{ secrets.OPENROUTER_API_KEY }}" >> .env
 
-      # ── 8. Build APK ──────────────────────────────────────────────────────
+      # ── 8. Build APK ───────────────────────────────────────────────────────
       - name: Build APK with Buildozer
         run: |
           yes | buildozer android debug 2>&1 | tee build.log
@@ -93,20 +89,29 @@ jobs:
           ANDROID_NDK_HOME: /home/runner/.buildozer/android/platform/android-ndk-r25b
           JAVA_HOME:        /usr/lib/jvm/java-17-openjdk-amd64
 
-      # ── 9. Upload APK ─────────────────────────────────────────────────────
+      # ── 9. Show last 100 lines of build log (always) ──────────────────────
+      # This prints the tail of the log directly in the Actions UI so you can
+      # see exactly where Buildozer failed without downloading the artifact.
+      - name: Show build log tail
+        if: always()
+        run: |
+          echo "===== LAST 100 LINES OF BUILD LOG ====="
+          tail -n 100 build.log || echo "(build.log not found)"
+
+      # ── 10. Upload APK ─────────────────────────────────────────────────────
       - name: Upload APK artifact
         if: always()
-        uses: actions/upload-artifact@v4.4.3
+        uses: actions/upload-artifact@v4
         with:
           name: tuesday-mobile-apk
           path: bin/*.apk
           if-no-files-found: warn
           retention-days: 30
 
-      # ── 10. Always upload build log ───────────────────────────────────────
+      # ── 11. Upload build log ───────────────────────────────────────────────
       - name: Upload build log
         if: always()
-        uses: actions/upload-artifact@v4.4.3
+        uses: actions/upload-artifact@v4
         with:
           name: build-log
           path: build.log
