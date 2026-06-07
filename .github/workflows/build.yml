@@ -7,7 +7,7 @@ on:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
+  JAVA_HOME:        /usr/lib/jvm/java-17-openjdk-amd64
   ANDROID_SDK_ROOT: /home/runner/.buildozer/android/platform/android-sdk
   ANDROID_HOME:     /home/runner/.buildozer/android/platform/android-sdk
   ANDROID_NDK_HOME: /home/runner/.buildozer/android/platform/android-ndk-r25b
@@ -28,19 +28,7 @@ jobs:
         with:
           python-version: "3.11"
 
-      # ── 3. Force Java 17 system-wide FIRST ───────────────────────────────
-      # Must happen before ANY step that touches Java or sdkmanager
-      - name: Set Java 17 as default
-        run: |
-          sudo update-alternatives --set java \
-            /usr/lib/jvm/java-17-openjdk-amd64/bin/java
-          sudo update-alternatives --set javac \
-            /usr/lib/jvm/java-17-openjdk-amd64/bin/javac
-          echo "JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64" >> $GITHUB_ENV
-          java -version
-          javac -version
-
-      # ── 4. Cache Buildozer ────────────────────────────────────────────────
+      # ── 3. Cache Buildozer ────────────────────────────────────────────────
       - name: Cache Buildozer global directory
         uses: actions/cache@v4
         with:
@@ -55,7 +43,8 @@ jobs:
           path: ~/.cache/pip
           key: pip-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
 
-      # ── 5. System dependencies ────────────────────────────────────────────
+      # ── 4. System dependencies + Java 17 ─────────────────────────────────
+      # Install Java 17 HERE first, then confirm it exists before using it
       - name: Install system dependencies
         run: |
           sudo apt-get update -qq
@@ -71,6 +60,24 @@ jobs:
             ccache \
             aapt
 
+      # ── 5. Set Java 17 AFTER it is installed ─────────────────────────────
+      - name: Set Java 17 as default
+        run: |
+          # Find actual Java 17 path (handles minor version differences)
+          JAVA17=$(find /usr/lib/jvm -name "java" -path "*/java-17*" | head -1)
+          JAVAC17=$(find /usr/lib/jvm -name "javac" -path "*/java-17*" | head -1)
+          echo "Found java: $JAVA17"
+          echo "Found javac: $JAVAC17"
+          # Set via update-alternatives now that it's installed
+          sudo update-alternatives --install /usr/bin/java java "$JAVA17" 1
+          sudo update-alternatives --set java "$JAVA17"
+          sudo update-alternatives --install /usr/bin/javac javac "$JAVAC17" 1
+          sudo update-alternatives --set javac "$JAVAC17"
+          # Write to GITHUB_ENV so all subsequent steps inherit it
+          echo "JAVA_HOME=$(dirname $(dirname $JAVA17))" >> $GITHUB_ENV
+          java -version
+          javac -version
+
       # ── 6. Install build tools ────────────────────────────────────────────
       - name: Install Buildozer and Cython
         run: |
@@ -84,8 +91,6 @@ jobs:
 
       # ── 7. Install Android SDK cmdline-tools ──────────────────────────────
       - name: Install Android SDK cmdline-tools
-        env:
-          JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
         run: |
           mkdir -p $ANDROID_SDK_ROOT/cmdline-tools
           wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip \
@@ -93,7 +98,7 @@ jobs:
           unzip -q /tmp/cmdline-tools.zip -d /tmp/cmdline-tools-extract
           mv /tmp/cmdline-tools-extract/cmdline-tools \
             $ANDROID_SDK_ROOT/cmdline-tools/latest
-          # Symlink for old-style tools/bin/sdkmanager path Buildozer looks for
+          # Symlink for old-style path Buildozer expects
           mkdir -p $ANDROID_SDK_ROOT/tools/bin
           ln -sf $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager \
             $ANDROID_SDK_ROOT/tools/bin/sdkmanager
@@ -102,8 +107,6 @@ jobs:
 
       # ── 8. Accept Android SDK licenses ───────────────────────────────────
       - name: Accept Android SDK licenses
-        env:
-          JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
         run: |
           yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --licenses || true
           mkdir -p $ANDROID_SDK_ROOT/licenses
@@ -120,8 +123,6 @@ jobs:
 
       # ── 10. Build APK ─────────────────────────────────────────────────────
       - name: Build APK with Buildozer
-        env:
-          JAVA_HOME:    /usr/lib/jvm/java-17-openjdk-amd64
         run: |
           yes | buildozer android debug 2>&1 | tee build.log
 
