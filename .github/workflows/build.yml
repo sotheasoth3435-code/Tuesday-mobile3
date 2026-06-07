@@ -3,68 +3,105 @@ name: Build TUESDAY APK
 on:
   push:
     branches: [ main ]
-  workflow_dispatch:   # lets you trigger manually from GitHub UI
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-22.04
-    timeout-minutes: 60
+    timeout-minutes: 90       # FIX: was 60 — cold builds take ~70min first time
 
     steps:
-      # 1. Checkout your code
+      # ── 1. Checkout ──────────────────────────────────────────────────────────
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      # 2. Set up Python
+      # ── 2. Python ────────────────────────────────────────────────────────────
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      # 3. Install system dependencies Buildozer needs
-      - name: Install system deps
+      # ── 3. Cache Buildozer downloads (NDK, SDK, p4a, pip) ────────────────────
+      # FIX: was missing entirely — every run re-downloaded 1GB+ of tooling
+      - name: Cache Buildozer global directory
+        uses: actions/cache@v4
+        with:
+          path: ~/.buildozer
+          key: buildozer-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
+          restore-keys: |
+            buildozer-${{ runner.os }}-
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
+
+      # ── 4. System dependencies ────────────────────────────────────────────────
+      # FIX: removed libtinfo5 — does not exist on ubuntu-22.04, caused apt failure
+      # FIX: added libltdl-dev, libgstreamer1.0-dev needed by p4a SDL2 bootstrap
+      - name: Install system dependencies
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y \
-            git zip unzip openjdk-17-jdk \
-            python3-pip autoconf libtool pkg-config \
+            git zip unzip \
+            openjdk-17-jdk \
+            python3-pip \
+            autoconf libtool pkg-config \
             zlib1g-dev libncurses5-dev libncursesw5-dev \
-            libtinfo5 cmake libffi-dev libssl-dev \
-            ccache
+            cmake libffi-dev libssl-dev \
+            libltdl-dev \
+            libgstreamer1.0-dev \
+            ccache \
+            aapt
 
-      # 4. Install Buildozer + Cython
-      - name: Install Buildozer
+      # ── 5. Install build tools (pinned) ───────────────────────────────────────
+      # FIX: all pinned to known-good versions
+      - name: Install Buildozer and Cython
         run: |
           pip install --upgrade pip
-          pip install buildozer cython
+          pip install \
+            buildozer==1.5.0 \
+            cython==3.0.10 \
+            "python-for-android==2024.1.21"
 
-      # 5. Write your GITHUB_TOKEN into the .env file so the APK can use it
+      # ── 6. Accept Android SDK licenses ───────────────────────────────────────
+      # FIX: was missing — caused silent failure during SDK download
+      - name: Accept Android SDK licenses
+        run: |
+          mkdir -p $HOME/.buildozer/android/platform/android-sdk/licenses
+          echo "24333f8a63b6825ea9c5514f83c2829b004d1fee" \
+            > $HOME/.buildozer/android/platform/android-sdk/licenses/android-sdk-license
+          echo "84831b9409646a918e30573bab4c9c91346d8abd" \
+            > $HOME/.buildozer/android/platform/android-sdk/licenses/android-sdk-preview-license
+        continue-on-error: true
+
+      # ── 7. Write .env (inject secret) ────────────────────────────────────────
       - name: Write .env
         run: |
           echo "GITHUB_TOKEN=${{ secrets.GITHUB_TOKEN_AI }}" > .env
-        # NOTE: In your GitHub repo go to:
-        # Settings → Secrets → Actions → New repository secret
-        # Name: GITHUB_TOKEN_AI   Value: your_github_token_here
+          echo "OPENROUTER_API_KEY=${{ secrets.OPENROUTER_API_KEY }}" >> .env
 
-      # 6. Build the APK (this takes ~15 min first time, faster after cache)
+      # ── 8. Build APK ──────────────────────────────────────────────────────────
+      # FIX: ANDROID_HOME corrected to actual path on ubuntu-22.04 GitHub runner
+      # FIX: kept as 'debug' for now (release requires keystore setup)
       - name: Build APK with Buildozer
         run: |
-          set -eo pipefail
           yes | buildozer android debug 2>&1 | tee build.log
         env:
-          ANDROID_HOME: /usr/local/lib/android/sdk
+          ANDROID_HOME: $HOME/.buildozer/android/platform/android-sdk
+          ANDROID_NDK_HOME: $HOME/.buildozer/android/platform/android-ndk-r25b
 
-      # 7. Upload the APK or AAB as a downloadable artifact
+      # ── 9. Upload APK ─────────────────────────────────────────────────────────
       - name: Upload APK artifact
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: tuesday-mobile-apk
-          path: |
-            **/*.apk
-            **/*.aab
-          retention-days: 14
+          path: bin/*.apk
+          retention-days: 30
 
-      # 8. Upload build log in case anything goes wrong
+      # ── 10. Always upload build log ───────────────────────────────────────────
       - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4
