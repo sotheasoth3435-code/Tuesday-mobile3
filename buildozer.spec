@@ -68,6 +68,7 @@ android.gradle_dependencies = com.google.android.material:material:1.11.0
 # Uncomment and add your icon file to use a custom icon:
 # icon.filename      = %(source.dir)s/tuesday_icon.png
 # presplash.filename = %(source.dir)s/tuesday_splash.png
+p4a.python_version = 3.11
 
 # ── p4a bootstrap ─────────────────────────────────────────────────────────────
 p4a.bootstrap = sdl2
