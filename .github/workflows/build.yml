@@ -10,7 +10,6 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 120
 
-    # Define paths once so they expand correctly everywhere
     env:
       BUILDOZER_HOME:   /home/runner/.buildozer
       ANDROID_SDK_ROOT: /home/runner/.buildozer/android/platform/android-sdk
@@ -19,17 +18,17 @@ jobs:
     steps:
       # ── 1. Checkout ──────────────────────────────────────────────────────────
       - name: Checkout repo
-        uses: actions/checkout@v4.2.2      # Node 24 compatible
+        uses: actions/checkout@v4.2.2
 
       # ── 2. Python ────────────────────────────────────────────────────────────
       - name: Set up Python 3.11
-        uses: actions/setup-python@v5.3.0  # Node 24 compatible
+        uses: actions/setup-python@v5.3.0
         with:
           python-version: "3.11"
 
-      # ── 3. Cache Buildozer (NDK, SDK, p4a, pip) ───────────────────────────
+      # ── 3. Cache Buildozer ────────────────────────────────────────────────
       - name: Cache Buildozer global directory
-        uses: actions/cache@v4.2.0         # Node 24 compatible
+        uses: actions/cache@v4.2.0
         with:
           path: /home/runner/.buildozer
           key: buildozer-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
@@ -43,6 +42,8 @@ jobs:
           key: pip-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
 
       # ── 4. System dependencies ────────────────────────────────────────────
+      # NOTE: libgstreamer1.0-dev REMOVED — has broken deps on ubuntu-22.04
+      # runners and is not needed for Kivy SDL2 bootstrap APK builds.
       - name: Install system dependencies
         run: |
           sudo apt-get update -qq
@@ -54,7 +55,7 @@ jobs:
             zlib1g-dev libncurses5-dev libncursesw5-dev \
             cmake libffi-dev libssl-dev \
             libltdl-dev \
-            libgstreamer1.0-dev \
+            libunwind-dev \
             ccache \
             aapt
 
@@ -93,14 +94,13 @@ jobs:
           JAVA_HOME:        /usr/lib/jvm/java-17-openjdk-amd64
 
       # ── 9. Upload APK ─────────────────────────────────────────────────────
-      # if: always() so we get the artifact even if upload-artifact warns
       - name: Upload APK artifact
         if: always()
-        uses: actions/upload-artifact@v4.4.3   # Node 24 compatible
+        uses: actions/upload-artifact@v4.4.3
         with:
           name: tuesday-mobile-apk
           path: bin/*.apk
-          if-no-files-found: warn              # warn instead of error so log still uploads
+          if-no-files-found: warn
           retention-days: 30
 
       # ── 10. Always upload build log ───────────────────────────────────────
