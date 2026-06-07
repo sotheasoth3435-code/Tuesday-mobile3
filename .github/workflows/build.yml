@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true   # silences Node 20 warnings globally
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   build:
@@ -14,11 +14,11 @@ jobs:
     timeout-minutes: 120
 
     steps:
-      # ── 1. Checkout ──────────────────────────────────────────────────────────
+      # ── 1. Checkout ───────────────────────────────────────────────────────
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      # ── 2. Python ────────────────────────────────────────────────────────────
+      # ── 2. Python ─────────────────────────────────────────────────────────
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
@@ -39,7 +39,7 @@ jobs:
           path: ~/.cache/pip
           key: pip-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
 
-      # ── 4. System dependencies ─────────────────────────────────────────────
+      # ── 4. System dependencies ────────────────────────────────────────────
       - name: Install system dependencies
         run: |
           sudo apt-get update -qq
@@ -55,50 +55,90 @@ jobs:
             ccache \
             aapt
 
-      # ── 5. Install build tools ─────────────────────────────────────────────
+      # ── 5. Set Java 17 as default (log showed temurin-11 was picked up) ──
+      - name: Set Java 17 as default
+        run: |
+          sudo update-alternatives --set java \
+            /usr/lib/jvm/java-17-openjdk-amd64/bin/java
+          sudo update-alternatives --set javac \
+            /usr/lib/jvm/java-17-openjdk-amd64/bin/javac
+          java -version
+          javac -version
+
+      # ── 6. Install build tools ────────────────────────────────────────────
+      # FIX: pin sh<2.0 BEFORE installing p4a — p4a 2024.1.21 requires sh<2.0
+      # but the runner default has sh 2.2.5 which breaks the p4a pip install
       - name: Install Buildozer and Cython
         run: |
           pip install --upgrade pip
+          pip install "sh>=1.10,<2.0"
           pip install \
             buildozer==1.5.0 \
             cython==3.0.10 \
             "python-for-android==2024.1.21"
+          # Verify sh version is correct
+          python -c "import sh; print('sh version:', sh.__version__)"
 
-      # ── 6. Accept Android SDK licenses ────────────────────────────────────
-      - name: Accept Android SDK licenses
-        continue-on-error: true
+      # ── 7. Install Android SDK command-line tools manually ────────────────
+      # FIX: sdkmanager was missing because the cached SDK only had old
+      # 'tools/' layout. We install the new cmdline-tools which includes
+      # sdkmanager at the path Buildozer expects.
+      - name: Install Android SDK cmdline-tools
         run: |
-          mkdir -p /home/runner/.buildozer/android/platform/android-sdk/licenses
-          echo "24333f8a63b6825ea9c5514f83c2829b004d1fee" \
-            > /home/runner/.buildozer/android/platform/android-sdk/licenses/android-sdk-license
-          echo "84831b9409646a918e30573bab4c9c91346d8abd" \
-            > /home/runner/.buildozer/android/platform/android-sdk/licenses/android-sdk-preview-license
+          export ANDROID_SDK_ROOT=/home/runner/.buildozer/android/platform/android-sdk
+          mkdir -p $ANDROID_SDK_ROOT/cmdline-tools
 
-      # ── 7. Write .env ──────────────────────────────────────────────────────
+          # Download latest cmdline-tools
+          wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip \
+            -O /tmp/cmdline-tools.zip
+          unzip -q /tmp/cmdline-tools.zip -d /tmp/cmdline-tools-extract
+          mv /tmp/cmdline-tools-extract/cmdline-tools \
+            $ANDROID_SDK_ROOT/cmdline-tools/latest
+
+          # Symlink so old-style tools/bin/sdkmanager path also works
+          mkdir -p $ANDROID_SDK_ROOT/tools/bin
+          ln -sf $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager \
+            $ANDROID_SDK_ROOT/tools/bin/sdkmanager
+
+          echo "sdkmanager version:"
+          $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --version
+
+      # ── 8. Accept Android SDK licenses ───────────────────────────────────
+      - name: Accept Android SDK licenses
+        run: |
+          export ANDROID_SDK_ROOT=/home/runner/.buildozer/android/platform/android-sdk
+          yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --licenses || true
+          mkdir -p $ANDROID_SDK_ROOT/licenses
+          echo "24333f8a63b6825ea9c5514f83c2829b004d1fee" \
+            > $ANDROID_SDK_ROOT/licenses/android-sdk-license
+          echo "84831b9409646a918e30573bab4c9c91346d8abd" \
+            > $ANDROID_SDK_ROOT/licenses/android-sdk-preview-license
+
+      # ── 9. Write .env ─────────────────────────────────────────────────────
       - name: Write .env
         run: |
           echo "GITHUB_TOKEN=${{ secrets.GITHUB_TOKEN_AI }}" > .env
           echo "OPENROUTER_API_KEY=${{ secrets.OPENROUTER_API_KEY }}" >> .env
 
-      # ── 8. Build APK ───────────────────────────────────────────────────────
+      # ── 10. Build APK ─────────────────────────────────────────────────────
       - name: Build APK with Buildozer
         run: |
           yes | buildozer android debug 2>&1 | tee build.log
         env:
           ANDROID_HOME:     /home/runner/.buildozer/android/platform/android-sdk
+          ANDROID_SDK_ROOT: /home/runner/.buildozer/android/platform/android-sdk
           ANDROID_NDK_HOME: /home/runner/.buildozer/android/platform/android-ndk-r25b
           JAVA_HOME:        /usr/lib/jvm/java-17-openjdk-amd64
+          PATH: /usr/lib/jvm/java-17-openjdk-amd64/bin:/home/runner/.buildozer/android/platform/android-sdk/cmdline-tools/latest/bin:/home/runner/.buildozer/android/platform/android-sdk/platform-tools:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
-      # ── 9. Show last 100 lines of build log (always) ──────────────────────
-      # This prints the tail of the log directly in the Actions UI so you can
-      # see exactly where Buildozer failed without downloading the artifact.
+      # ── 11. Show build log tail ───────────────────────────────────────────
       - name: Show build log tail
         if: always()
         run: |
           echo "===== LAST 100 LINES OF BUILD LOG ====="
           tail -n 100 build.log || echo "(build.log not found)"
 
-      # ── 10. Upload APK ─────────────────────────────────────────────────────
+      # ── 12. Upload APK ────────────────────────────────────────────────────
       - name: Upload APK artifact
         if: always()
         uses: actions/upload-artifact@v4
@@ -108,7 +148,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
-      # ── 11. Upload build log ───────────────────────────────────────────────
+      # ── 13. Upload build log ──────────────────────────────────────────────
       - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4
