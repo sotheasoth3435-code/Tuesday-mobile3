@@ -43,6 +43,15 @@ jobs:
           path: ~/.cache/pip
           key: pip-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
 
+      # ── Wipe stale p4a Python build cache ────────────────────────────────
+      # Must run AFTER cache restore so a cached Python 3.14 build is always removed.
+      # p4a.python_version = 3.11 in buildozer.spec is correct, but a stale cache
+      # can override it — this guarantees a clean Python cross-build every time.
+      - name: Clear stale p4a cache
+        run: |
+          rm -rf /home/runner/.buildozer/android/platform/build-arm64-v8a/build/other_builds/python3
+          echo "Cleared stale python3 build cache"
+
       # ── 4. System dependencies + Java 17 ─────────────────────────────────
       # Install Java 17 HERE first, then confirm it exists before using it
       - name: Install system dependencies
@@ -120,11 +129,6 @@ jobs:
         run: |
           echo "GITHUB_TOKEN=${{ secrets.GITHUB_TOKEN_AI }}" > .env
           echo "OPENROUTER_API_KEY=${{ secrets.OPENROUTER_API_KEY }}" >> .env
-      # ── Wipe stale p4a Python build cache ────────────────────────────────
-      - name: Clear stale p4a cache
-        run: |
-          rm -rf /home/runner/.buildozer/android/platform/build-arm64-v8a/build/other_builds/python3
-          echo "Cleared stale python3 build cache"
       # ── 10. Build APK ─────────────────────────────────────────────────────
       - name: Build APK with Buildozer
         run: |
