@@ -120,7 +120,11 @@ jobs:
         run: |
           echo "GITHUB_TOKEN=${{ secrets.GITHUB_TOKEN_AI }}" > .env
           echo "OPENROUTER_API_KEY=${{ secrets.OPENROUTER_API_KEY }}" >> .env
-
+      # ── Wipe stale p4a Python build cache ────────────────────────────────
+      - name: Clear stale p4a cache
+        run: |
+          rm -rf /home/runner/.buildozer/android/platform/build-arm64-v8a/build/other_builds/python3
+          echo "Cleared stale python3 build cache"
       # ── 10. Build APK ─────────────────────────────────────────────────────
       - name: Build APK with Buildozer
         run: |
