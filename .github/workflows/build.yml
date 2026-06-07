@@ -7,6 +7,10 @@ on:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
+  ANDROID_SDK_ROOT: /home/runner/.buildozer/android/platform/android-sdk
+  ANDROID_HOME:     /home/runner/.buildozer/android/platform/android-sdk
+  ANDROID_NDK_HOME: /home/runner/.buildozer/android/platform/android-ndk-r25b
 
 jobs:
   build:
@@ -24,7 +28,19 @@ jobs:
         with:
           python-version: "3.11"
 
-      # ── 3. Cache Buildozer ────────────────────────────────────────────────
+      # ── 3. Force Java 17 system-wide FIRST ───────────────────────────────
+      # Must happen before ANY step that touches Java or sdkmanager
+      - name: Set Java 17 as default
+        run: |
+          sudo update-alternatives --set java \
+            /usr/lib/jvm/java-17-openjdk-amd64/bin/java
+          sudo update-alternatives --set javac \
+            /usr/lib/jvm/java-17-openjdk-amd64/bin/javac
+          echo "JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64" >> $GITHUB_ENV
+          java -version
+          javac -version
+
+      # ── 4. Cache Buildozer ────────────────────────────────────────────────
       - name: Cache Buildozer global directory
         uses: actions/cache@v4
         with:
@@ -39,7 +55,7 @@ jobs:
           path: ~/.cache/pip
           key: pip-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
 
-      # ── 4. System dependencies ────────────────────────────────────────────
+      # ── 5. System dependencies ────────────────────────────────────────────
       - name: Install system dependencies
         run: |
           sudo apt-get update -qq
@@ -55,19 +71,7 @@ jobs:
             ccache \
             aapt
 
-      # ── 5. Set Java 17 as default (log showed temurin-11 was picked up) ──
-      - name: Set Java 17 as default
-        run: |
-          sudo update-alternatives --set java \
-            /usr/lib/jvm/java-17-openjdk-amd64/bin/java
-          sudo update-alternatives --set javac \
-            /usr/lib/jvm/java-17-openjdk-amd64/bin/javac
-          java -version
-          javac -version
-
       # ── 6. Install build tools ────────────────────────────────────────────
-      # FIX: pin sh<2.0 BEFORE installing p4a — p4a 2024.1.21 requires sh<2.0
-      # but the runner default has sh 2.2.5 which breaks the p4a pip install
       - name: Install Buildozer and Cython
         run: |
           pip install --upgrade pip
@@ -76,37 +80,31 @@ jobs:
             buildozer==1.5.0 \
             cython==3.0.10 \
             "python-for-android==2024.1.21"
-          # Verify sh version is correct
-          python -c "import sh; print('sh version:', sh.__version__)"
+          python -c "import sh; print('sh version OK:', sh.__version__)"
 
-      # ── 7. Install Android SDK command-line tools manually ────────────────
-      # FIX: sdkmanager was missing because the cached SDK only had old
-      # 'tools/' layout. We install the new cmdline-tools which includes
-      # sdkmanager at the path Buildozer expects.
+      # ── 7. Install Android SDK cmdline-tools ──────────────────────────────
       - name: Install Android SDK cmdline-tools
+        env:
+          JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
         run: |
-          export ANDROID_SDK_ROOT=/home/runner/.buildozer/android/platform/android-sdk
           mkdir -p $ANDROID_SDK_ROOT/cmdline-tools
-
-          # Download latest cmdline-tools
           wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip \
             -O /tmp/cmdline-tools.zip
           unzip -q /tmp/cmdline-tools.zip -d /tmp/cmdline-tools-extract
           mv /tmp/cmdline-tools-extract/cmdline-tools \
             $ANDROID_SDK_ROOT/cmdline-tools/latest
-
-          # Symlink so old-style tools/bin/sdkmanager path also works
+          # Symlink for old-style tools/bin/sdkmanager path Buildozer looks for
           mkdir -p $ANDROID_SDK_ROOT/tools/bin
           ln -sf $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager \
             $ANDROID_SDK_ROOT/tools/bin/sdkmanager
-
           echo "sdkmanager version:"
           $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --version
 
       # ── 8. Accept Android SDK licenses ───────────────────────────────────
       - name: Accept Android SDK licenses
+        env:
+          JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
         run: |
-          export ANDROID_SDK_ROOT=/home/runner/.buildozer/android/platform/android-sdk
           yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --licenses || true
           mkdir -p $ANDROID_SDK_ROOT/licenses
           echo "24333f8a63b6825ea9c5514f83c2829b004d1fee" \
@@ -122,14 +120,10 @@ jobs:
 
       # ── 10. Build APK ─────────────────────────────────────────────────────
       - name: Build APK with Buildozer
+        env:
+          JAVA_HOME:    /usr/lib/jvm/java-17-openjdk-amd64
         run: |
           yes | buildozer android debug 2>&1 | tee build.log
-        env:
-          ANDROID_HOME:     /home/runner/.buildozer/android/platform/android-sdk
-          ANDROID_SDK_ROOT: /home/runner/.buildozer/android/platform/android-sdk
-          ANDROID_NDK_HOME: /home/runner/.buildozer/android/platform/android-ndk-r25b
-          JAVA_HOME:        /usr/lib/jvm/java-17-openjdk-amd64
-          PATH: /usr/lib/jvm/java-17-openjdk-amd64/bin:/home/runner/.buildozer/android/platform/android-sdk/cmdline-tools/latest/bin:/home/runner/.buildozer/android/platform/android-sdk/platform-tools:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
       # ── 11. Show build log tail ───────────────────────────────────────────
       - name: Show build log tail
