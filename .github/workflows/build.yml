@@ -8,38 +8,41 @@ on:
 jobs:
   build:
     runs-on: ubuntu-22.04
-    timeout-minutes: 90       # FIX: was 60 — cold builds take ~70min first time
+    timeout-minutes: 120
+
+    # Define paths once so they expand correctly everywhere
+    env:
+      BUILDOZER_HOME:   /home/runner/.buildozer
+      ANDROID_SDK_ROOT: /home/runner/.buildozer/android/platform/android-sdk
+      ANDROID_NDK_ROOT: /home/runner/.buildozer/android/platform/android-ndk-r25b
 
     steps:
       # ── 1. Checkout ──────────────────────────────────────────────────────────
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4.2.2      # Node 24 compatible
 
       # ── 2. Python ────────────────────────────────────────────────────────────
       - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v5.3.0  # Node 24 compatible
         with:
           python-version: "3.11"
 
-      # ── 3. Cache Buildozer downloads (NDK, SDK, p4a, pip) ────────────────────
-      # FIX: was missing entirely — every run re-downloaded 1GB+ of tooling
+      # ── 3. Cache Buildozer (NDK, SDK, p4a, pip) ───────────────────────────
       - name: Cache Buildozer global directory
-        uses: actions/cache@v4
+        uses: actions/cache@v4.2.0         # Node 24 compatible
         with:
-          path: ~/.buildozer
+          path: /home/runner/.buildozer
           key: buildozer-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
           restore-keys: |
             buildozer-${{ runner.os }}-
 
       - name: Cache pip
-        uses: actions/cache@v4
+        uses: actions/cache@v4.2.0
         with:
           path: ~/.cache/pip
           key: pip-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
 
-      # ── 4. System dependencies ────────────────────────────────────────────────
-      # FIX: removed libtinfo5 — does not exist on ubuntu-22.04, caused apt failure
-      # FIX: added libltdl-dev, libgstreamer1.0-dev needed by p4a SDL2 bootstrap
+      # ── 4. System dependencies ────────────────────────────────────────────
       - name: Install system dependencies
         run: |
           sudo apt-get update -qq
@@ -50,14 +53,12 @@ jobs:
             autoconf libtool pkg-config \
             zlib1g-dev libncurses5-dev libncursesw5-dev \
             cmake libffi-dev libssl-dev \
-            libunwind-dev \
             libltdl-dev \
             libgstreamer1.0-dev \
             ccache \
             aapt
 
-      # ── 5. Install build tools (pinned) ───────────────────────────────────────
-      # FIX: all pinned to known-good versions
+      # ── 5. Install build tools ────────────────────────────────────────────
       - name: Install Buildozer and Cython
         run: |
           pip install --upgrade pip
@@ -66,46 +67,46 @@ jobs:
             cython==3.0.10 \
             "python-for-android==2024.1.21"
 
-      # ── 6. Accept Android SDK licenses ───────────────────────────────────────
-      # FIX: was missing — caused silent failure during SDK download
+      # ── 6. Accept Android SDK licenses ───────────────────────────────────
       - name: Accept Android SDK licenses
         run: |
-          mkdir -p $HOME/.buildozer/android/platform/android-sdk/licenses
+          mkdir -p /home/runner/.buildozer/android/platform/android-sdk/licenses
           echo "24333f8a63b6825ea9c5514f83c2829b004d1fee" \
-            > $HOME/.buildozer/android/platform/android-sdk/licenses/android-sdk-license
+            > /home/runner/.buildozer/android/platform/android-sdk/licenses/android-sdk-license
           echo "84831b9409646a918e30573bab4c9c91346d8abd" \
-            > $HOME/.buildozer/android/platform/android-sdk/licenses/android-sdk-preview-license
+            > /home/runner/.buildozer/android/platform/android-sdk/licenses/android-sdk-preview-license
         continue-on-error: true
 
-      # ── 7. Write .env (inject secret) ────────────────────────────────────────
+      # ── 7. Write .env ─────────────────────────────────────────────────────
       - name: Write .env
         run: |
           echo "GITHUB_TOKEN=${{ secrets.GITHUB_TOKEN_AI }}" > .env
           echo "OPENROUTER_API_KEY=${{ secrets.OPENROUTER_API_KEY }}" >> .env
 
-      # ── 8. Build APK ──────────────────────────────────────────────────────────
-      # FIX: ANDROID_HOME corrected to actual path on ubuntu-22.04 GitHub runner
-      # FIX: kept as 'debug' for now (release requires keystore setup)
+      # ── 8. Build APK ──────────────────────────────────────────────────────
       - name: Build APK with Buildozer
         run: |
           yes | buildozer android debug 2>&1 | tee build.log
         env:
-          ANDROID_HOME: $HOME/.buildozer/android/platform/android-sdk
-          ANDROID_NDK_HOME: $HOME/.buildozer/android/platform/android-ndk-r25b
+          ANDROID_HOME:     /home/runner/.buildozer/android/platform/android-sdk
+          ANDROID_NDK_HOME: /home/runner/.buildozer/android/platform/android-ndk-r25b
+          JAVA_HOME:        /usr/lib/jvm/java-17-openjdk-amd64
 
-      # ── 9. Upload APK ─────────────────────────────────────────────────────────
+      # ── 9. Upload APK ─────────────────────────────────────────────────────
+      # if: always() so we get the artifact even if upload-artifact warns
       - name: Upload APK artifact
-        if: success()
-        uses: actions/upload-artifact@v4
+        if: always()
+        uses: actions/upload-artifact@v4.4.3   # Node 24 compatible
         with:
           name: tuesday-mobile-apk
           path: bin/*.apk
+          if-no-files-found: warn              # warn instead of error so log still uploads
           retention-days: 30
 
-      # ── 10. Always upload build log ───────────────────────────────────────────
+      # ── 10. Always upload build log ───────────────────────────────────────
       - name: Upload build log
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4.4.3
         with:
           name: build-log
           path: build.log
